@@ -1,3 +1,4 @@
+import { adaptColor, type Appearance } from "./appearance.ts";
 import {
 	DEFAULT_STYLE,
 	headingStyle,
@@ -654,15 +655,20 @@ export function paintFlowPage(
 	paper: Rgba,
 	textColor: Rgba | undefined,
 	math: MathPlacement[],
+	appearance?: Appearance,
 ): void {
 	const dark = isDark(paper);
-	const ink: Rgba = textColor ?? flow.defaultColor ?? (dark ? [236, 236, 236, 255] : [28, 28, 28, 255]);
+	const actualInk: Rgba = textColor ?? flow.defaultColor ?? (dark ? [236, 236, 236, 255] : [28, 28, 28, 255]);
+	const ink = appearance ? adaptColor(actualInk,appearance) : actualInk;
 	const rule: Rgba = dark ? [140, 140, 140, 255] : [100, 100, 100, 255];
 	const fill = (x: number, y: number, w: number, h: number, c: Rgba) => {
 		ctx.fillStyle = rgbaCss(c);
 		ctx.fillRect(x, y, w, h);
 	};
-	const inkOf = (s: CharStyle): Rgba => s.color ?? (s.link ? LINK_COLOR : ink);
+	const inkOf = (s: CharStyle): Rgba => {
+		const color=s.color ?? (s.link ? LINK_COLOR : ink);
+		return appearance ? adaptColor(color,appearance) : color;
+	};
 
 	ctx.save();
 	for (const t of page.tables) paintTable(t, t.lineColor ?? rule, fill);

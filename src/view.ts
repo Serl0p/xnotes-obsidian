@@ -1,14 +1,15 @@
-import { finishRenderMath, FileView, loadPdfJs, Notice, WorkspaceLeaf, type TFile } from "obsidian";
+import { finishRenderMath, FileView, loadPdfJs, Notice, Platform, WorkspaceLeaf, type TFile } from "obsidian";
 import { flowMath, isEmptyFlow } from "./flow.ts";
 import { layoutFlow, type PageFlow } from "./flowLayout.ts";
 import { MathSetter } from "./math.ts";
 import { parseXNote } from "./parser.ts";
 import { renderPage, type PdfSource } from "./renderer.ts";
 import { TextMeasurer } from "./text.ts";
-import type { XNoteDocument } from "./types.ts";
+import type { XNoteDocument, AudioItem } from "./types.ts";
+import { resolveAppearance, type AppearanceSettings } from "./appearance.ts";
 import type XNotesPlugin from "./main.ts";
 
-export const VIEW_TYPE_XNOTE = "xnote-view";
+export const VIEW_TYPE_XNOTE = "xnote-appearance-view";
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
@@ -24,7 +25,14 @@ interface PdfJs {
 	getDocument(params: { data: Uint8Array }): { promise: Promise<PdfDocument> };
 }
 
+interface AudioRecord { item:AudioItem; pageIndex:number; title:string; player:HTMLAudioElement; }
 export class XNoteView extends FileView {
+	private audioPanel!:HTMLElement;
+	private audioPlayers:AudioRecord[]=[];
+	private audioMarkers:{marker:HTMLButtonElement;record:AudioRecord}[]=[];
+	private themeObserver:MutationObserver|null=null;
+	private renderQueue:Promise<void>=Promise.resolve();
+	private generation=0;
 	private readonly plugin: XNotesPlugin;
 	private doc: XNoteDocument | null = null;
 	private assetUrls = new Map<string, string>();
@@ -72,7 +80,34 @@ export class XNoteView extends FileView {
 		this.zoomLabel = bar.createSpan({ cls: "xnote-zoom-label", text: "100%" });
 		mkBtn("+", "Zoom in", () => this.setZoom(this.zoom * ZOOM_STEP));
 
+		const controls=bar.createDiv({cls:"xnote-appearance-controls"});
+		const select=<K extends "appearanceMode"|"neonMode">(label:string,key:K,options:[AppearanceSettings[K],string][])=>{
+			const wrapper=controls.createEl("label",{cls:"xnote-appearance-mode"});
+			wrapper.createSpan({text:label});
+			const el=wrapper.createEl("select",{cls:"xnote-appearance-select"});
+			el.setAttribute("aria-label",label);
+			for(const [value,title] of options){const opt=el.createEl("option",{text:title});opt.value=value;}
+			el.value=this.plugin.settings[key];
+			el.onchange=()=>{const settings: AppearanceSettings=this.plugin.settings;settings[key]=el.value as AppearanceSettings[K];void this.changedAppearance();};
+		};
+		select("Page","appearanceMode",[["auto","Auto"],["original","Original"],["light","Light"],["dark","Dark"]]);
+		for(const [label,key] of [["Paper","showPaper"],["Template","showTemplate"],["Contrast","adaptInk"]] as const){
+			const wrapper=controls.createEl("label",{cls:"xnote-appearance-toggle"});
+			const cb=wrapper.createEl("input");cb.type="checkbox";cb.checked=this.plugin.settings[key];
+			wrapper.createSpan({text:label});
+			cb.onchange=()=>{this.plugin.settings[key]=cb.checked;void this.changedAppearance();};
+		}
+		select("Neon","neonMode",[["auto","Auto"],["simple","Simplified"],["glow","Full glow"]]);
+		this.audioPanel=this.contentEl.createDiv({cls:"xnote-audio-panel"});
+		this.audioPanel.hidden=true;
 		this.pagesEl = this.contentEl.createDiv({ cls: "xnote-pages" });
+		const doc=this.contentEl.ownerDocument;
+		let lastDark=this.isDark();
+		this.themeObserver=new MutationObserver(()=>{
+			const dark=this.isDark();if(dark===lastDark)return;lastDark=dark;
+			if(this.plugin.settings.appearanceMode==="auto"||!this.plugin.settings.showPaper)void this.rerenderAppearance();
+		});
+		for(const node of [doc.body,doc.documentElement])this.themeObserver.observe(node,{attributes:true,attributeFilter:["class"]});
 
 		this.registerDomEvent(window, "resize", () => {
 			if (this.fit) this.applyZoom();
@@ -142,6 +177,8 @@ export class XNoteView extends FileView {
 	}
 
 	async onLoadFile(file: TFile): Promise<void> {
+		const generation=++this.generation;
+		this.clearAudio();
 		this.revokeAssets();
 		this.pagesEl.empty();
 		this.doc = null;
@@ -154,6 +191,7 @@ export class XNoteView extends FileView {
 			return;
 		}
 
+		if(generation!==this.generation)return;
 		try {
 			this.doc = parseXNote(data);
 		} catch (e) {
@@ -175,7 +213,10 @@ export class XNoteView extends FileView {
 			}
 		}
 
+		if(generation!==this.generation)return;
 		await this.layoutText();
+		if(generation!==this.generation)return;
+		this.setupAudio();
 		await this.renderAll();
 	}
 
@@ -203,24 +244,94 @@ export class XNoteView extends FileView {
 	}
 
 	async onUnloadFile(): Promise<void> {
+		++this.generation;
+		this.clearAudio();
 		this.revokeAssets();
 		this.pagesEl.empty();
 		this.doc = null;
 	}
 
 	protected async onClose(): Promise<void> {
+		++this.generation;
+		this.themeObserver?.disconnect();
+		this.clearAudio();
 		this.revokeAssets();
+		this.doc=null;
 	}
 
-	private async renderAll(): Promise<void> {
+	private isDark():boolean{
+		const doc=this.contentEl.ownerDocument;
+		return doc.body.classList.contains("theme-dark")||doc.documentElement.classList.contains("theme-dark");
+	}
+	private async changedAppearance():Promise<void>{
+		try{await this.plugin.saveSettings();}catch(e){new Notice("xNotes: could not save appearance settings");}
+		await this.rerenderAppearance();
+	}
+	private rerenderAppearance():Promise<void>{
+		const generation=this.generation;
+		this.renderQueue=this.renderQueue.catch(()=>{}).then(async()=>{
+			if(generation===this.generation)await this.renderAll(true);
+		});
+		return this.renderQueue;
+	}
+	private clearAudio():void{
+		for(const {player} of this.audioPlayers){player.pause();player.removeAttribute("src");player.load();}
+		this.audioPlayers=[];this.audioMarkers=[];
+		if(this.audioPanel){this.audioPanel.empty();this.audioPanel.hidden=true;}
+	}
+	private setupAudio():void{
+		this.clearAudio();
+		if(!this.doc)return;
+		this.doc.manifest.pages.forEach((page,pageIndex)=>{
+			for(const item of page.items){
+				if(item.kind!=="audio"||typeof item.asset!=="string")continue;
+				const url=this.assetUrls.get(item.asset);if(!url)continue;
+				this.audioPanel.hidden=false;
+				const row=this.audioPanel.createDiv({cls:"xnote-audio-row"});
+				const title=item.name||`Recording ${this.audioPlayers.length+1}`;
+				row.createSpan({cls:"xnote-audio-name",text:`Page ${pageIndex+1} · ${title}`});
+				const player=row.createEl("audio",{cls:"xnote-audio-player"});
+				player.controls=true;player.preload="metadata";player.src=url;
+				const record={item,pageIndex,title,player};this.audioPlayers.push(record);
+				player.onplay=()=>{for(const other of this.audioPlayers)if(other!==record)other.player.pause();this.updateAudioMarkers();};
+				player.onpause=player.onended=()=>this.updateAudioMarkers();
+			}
+		});
+	}
+	private updateAudioMarkers():void{
+		for(const {marker,record} of this.audioMarkers){
+			const playing=!record.player.paused;
+			marker.setText(playing?"❚❚":"▶");
+			marker.setAttribute("aria-label",`${playing?"Pause":"Play"} ${record.title}`);
+			marker.classList.toggle("is-playing",playing);
+		}
+	}
+	private mountAudioMarkers(wrap:HTMLElement,index:number):void{
+		for(const record of this.audioPlayers){
+			if(record.pageIndex!==index)continue;
+			const rect=record.item.rect;
+			if(!Array.isArray(rect)||!Number.isFinite(rect[0])||!Number.isFinite(rect[1]))continue;
+			const marker=wrap.createEl("button",{cls:"xnote-audio-marker",text:"▶"});
+			marker.type="button";marker.dataset.x=String(rect[0]);marker.dataset.y=String(rect[1]);marker.title=record.title;
+			marker.onclick=()=>{if(record.player.paused)void record.player.play().catch(e=>new Notice(`xNotes audio: ${e.message}`));else record.player.pause();};
+			this.audioMarkers.push({marker,record});
+		}
+		this.updateAudioMarkers();
+	}
+	private async renderAll(preserveView=false): Promise<void> {
 		if (!this.doc) return;
+		const generation=this.generation;
+		const doc=this.doc;
+		const scrollX=this.pagesEl.scrollLeft,scrollY=this.pagesEl.scrollTop;
+		this.audioMarkers=[];
 		this.pagesEl.empty();
-		const { manifest } = this.doc;
-
-		this.fit = true;
+		const { manifest } = doc;
+		const appearance=resolveAppearance(this.plugin.settings,this.isDark(),Platform.isMobile);
+		if(!preserveView)this.fit = true;
 		const scale = this.effectiveScale();
 
 		for (let i = 0; i < manifest.pages.length; i++) {
+			if(generation!==this.generation)return;
 			const page = manifest.pages[i];
 			const wrap = this.pagesEl.createDiv({ cls: "xnote-page" });
 			const canvas = wrap.createEl("canvas");
@@ -231,14 +342,18 @@ export class XNoteView extends FileView {
 			const flowPage = this.flowPages?.[i];
 			const text = this.doc.flow && flowPage ? { flow: this.doc.flow, page: flowPage } : null;
 			try {
-				const formulas = await renderPage(canvas, page, manifest.style, manifest.writer ?? 0, this.assetUrls, scale, this.pdf, text, this.math);
+				const formulas = await renderPage(canvas, page, manifest.style, manifest.writer ?? 0, this.assetUrls, scale, this.pdf, text, this.math, appearance, doc.templates, manifest.dpi??DEFAULT_DPI);
+				if(generation!==this.generation)return;
 				for (const f of formulas) this.math.mount(layer, f);
 			} catch (e) {
 				wrap.setText(`Failed to render page ${i + 1}: ${(e as Error).message}`);
 			}
+			this.mountAudioMarkers(wrap,i);
 		}
 		await finishRenderMath();
+		if(generation!==this.generation)return;
 		this.applyZoom();
+		if(preserveView){this.pagesEl.scrollLeft=scrollX;this.pagesEl.scrollTop=scrollY;}
 	}
 
 	private effectiveScale(): number {
@@ -269,6 +384,7 @@ export class XNoteView extends FileView {
 		this.pagesEl.querySelectorAll<HTMLElement>(".xnote-math-layer").forEach((layer) => {
 			layer.setCssStyles({ transform: `scale(${this.zoom})` });
 		});
+		for(const {marker} of this.audioMarkers)marker.setCssStyles({left:`${Number(marker.dataset.x)*this.zoom}px`,top:`${Number(marker.dataset.y)*this.zoom}px`});
 		this.zoomLabel.setText(`${Math.round(this.zoom * 100)}%`);
 	}
 

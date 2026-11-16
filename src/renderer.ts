@@ -1,4 +1,6 @@
 import type { TextFlow } from "./flow.ts";
+import { adaptColor, adaptItem, type Appearance } from "./appearance.ts";
+import { renderTemplate } from "./template.ts";
 import { paintFlowPage, type PageFlow } from "./flowLayout.ts";
 import type { MathPlacement, MathSetter } from "./math.ts";
 import { buildStrokeGeometry, type StrokeGeometry } from "./strokeEngine.ts";
@@ -50,6 +52,9 @@ export async function renderPage(
 	pdf: PdfSource | null,
 	text: PageText | null,
 	math: MathSetter,
+	appearance: Appearance,
+	templates: Map<string, unknown>,
+	dpi: number,
 ): Promise<MathPlacement[]> {
 	const ctx = canvas.getContext("2d");
 	if (!ctx) throw new Error("2D canvas context unavailable");
@@ -60,18 +65,34 @@ export async function renderPage(
 	ctx.clearRect(0, 0, page.width, page.height);
 
 	const pageStyle = resolvePageStyle(style, page.style, writer);
-	if (pdf && page.pdf_page != null) {
-		drawPaper(ctx, page, pageStyle);
-		drawRulingInRooms(ctx, page, pageStyle);
+	const pdfBacked = pdf != null && page.pdf_page != null;
+	// Preserve source PDF colours and its ink; adapt paper only for ordinary notes.
+	if (!pdfBacked && appearance.mode !== "original") {
+		pageStyle.page_color = appearance.mode === "dark" ? [24,25,28,255] : [255,255,255,255];
+	}
+	const paperColor: Rgba = !appearance.showPaper && !pdfBacked
+		? (appearance.inkMode === "dark" ? [24,25,28,255] : [255,255,255,255])
+		: pageStyle.page_color ?? [255,255,255,255];
+	const itemAppearance = pdfBacked ? {...appearance, adaptInk:false} : appearance;
+	const templateStyle = {...pageStyle, page_color:paperColor, pattern_color:adaptColor(pageStyle.pattern_color,itemAppearance)};
+	if (pdfBacked && pdf) {
+		if (appearance.showPaper) drawPaper(ctx, page, pageStyle);
+		if (appearance.showTemplate) drawRulingInRooms(ctx, page, pageStyle);
 		await drawPdfPage(ctx, pdf, page);
 	} else {
-		drawBackground(ctx, page, pageStyle);
+		if (appearance.showPaper) drawPaper(ctx, page, pageStyle);
+		if (appearance.showTemplate) {
+			const template = templateStyle.template && templates.get(templateStyle.template);
+			if (template) renderTemplate(ctx, page, templateStyle, template, dpi);
+			else drawBackground(ctx, page, templateStyle, false);
+		}
 	}
 
 	const formulas: MathPlacement[] = [];
-	if (text) paintFlowPage(ctx, text.page, text.flow, pageStyle.page_color ?? [255, 255, 255, 255], page.style?.text_color, formulas);
+	if (text) paintFlowPage(ctx, text.page, text.flow, paperColor, adaptColor(page.style?.text_color,itemAppearance), formulas, itemAppearance);
 
-	for (const item of page.items) {
+	for (const savedItem of page.items) {
+		const item = adaptItem(savedItem,itemAppearance);
 		switch (item.kind) {
 			case "stroke":
 				drawStroke(ctx, item);
@@ -204,8 +225,8 @@ async function drawPdfPage(ctx: CanvasRenderingContext2D, pdf: PdfSource, page: 
 	}
 }
 
-function drawBackground(ctx: CanvasRenderingContext2D, page: Page, style?: PageStyle): void {
-	drawPaper(ctx, page, style);
+function drawBackground(ctx: CanvasRenderingContext2D, page: Page, style?: PageStyle, paper = true): void {
+	if (paper) drawPaper(ctx, page, style);
 
 	const pattern = style?.pattern ?? "none";
 	if (pattern === "none" || pattern === "blank") return;
@@ -324,20 +345,42 @@ function compositeLayer(
 	blur: number,
 ): void {
 	if (alpha <= 0) return;
-	const layer = new OffscreenCanvas(ctx.canvas.width, ctx.canvas.height);
-	const lctx = layer.getContext("2d");
-	if (!lctx) return;
-	lctx.setTransform(ctx.getTransform());
-	if (blur > 0) lctx.filter = `blur(${blur}px)`;
-	fillDiskRibbon(lctx, geom, fill);
-	ctx.save();
-	ctx.globalAlpha = alpha;
-	ctx.globalCompositeOperation = op;
+	// Work in backing-store pixels. The destination clip (including Insert Space cuts)
+	// remains active when the small buffer is composited.
 	const t = ctx.getTransform();
-	ctx.setTransform(1, 0, 0, 1, 0, 0);
-	ctx.drawImage(layer, 0, 0);
-	ctx.setTransform(t);
-	ctx.restore();
+	const radiusX = Math.hypot(t.a,t.c), radiusY = Math.hypot(t.b,t.d);
+	let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+	for(let i=0;i<geom.halfWidths.length;i++){
+		const x=geom.centerline[2*i], y=geom.centerline[2*i+1], r=geom.halfWidths[i];
+		const X=t.a*x+t.c*y+t.e, Y=t.b*x+t.d*y+t.f;
+		minX=Math.min(minX,X-r*radiusX); maxX=Math.max(maxX,X+r*radiusX);
+		minY=Math.min(minY,Y-r*radiusY); maxY=Math.max(maxY,Y+r*radiusY);
+	}
+	const pad=Math.ceil(4*blur)+3;
+	const x=Math.max(0,Math.floor(minX-pad)), y=Math.max(0,Math.floor(minY-pad));
+	const w=Math.min(ctx.canvas.width,Math.ceil(maxX+pad))-x;
+	const h=Math.min(ctx.canvas.height,Math.ceil(maxY+pad))-y;
+	if(!Number.isFinite(w*h)||w<=0||h<=0)return;
+	// Tile exceptionally large layers to bound peak allocation while retaining
+	// the one-composite-per-pixel opacity rule. Overlap supplies the blur margin.
+	const tile=1024;
+	for(let dy=0;dy<h;dy+=tile)for(let dx=0;dx<w;dx+=tile){
+		const tw=Math.min(tile,w-dx),th=Math.min(tile,h-dy);
+		const margin=Math.min(pad,512);
+		const layer=new OffscreenCanvas(tw+2*margin,th+2*margin);
+		const lctx=layer.getContext("2d");
+		if(!lctx)continue;
+		lctx.setTransform(t.a,t.b,t.c,t.d,t.e-x-dx+margin,t.f-y-dy+margin);
+		if(blur>0)lctx.filter=`blur(${blur}px)`;
+		fillDiskRibbon(lctx,geom,fill);
+		ctx.save();
+		ctx.globalAlpha=alpha;
+		ctx.globalCompositeOperation=op;
+		ctx.setTransform(1,0,0,1,0,0);
+		ctx.drawImage(layer,margin,margin,tw,th,x+dx,y+dy,tw,th);
+		ctx.restore();
+		layer.width=1;layer.height=1;
+	}
 }
 
 // Ink Insert space cut shows only on the near side of each cut edge.

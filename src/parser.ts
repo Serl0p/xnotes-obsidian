@@ -8,6 +8,7 @@ const IMAGE_MIME: Record<string, string> = {
 	jpeg: "image/jpeg",
 	webp: "image/webp",
 	gif: "image/gif",
+	m4a: "audio/mp4", aac: "audio/aac", mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", opus: "audio/ogg", webm: "audio/webm",
 };
 
 function mimeFor(path: string): string {
@@ -39,11 +40,21 @@ export function parseXNote(data: ArrayBuffer): XNoteDocument {
 	const flow = flowBytes ? parseFlowXml(new TextDecoder().decode(flowBytes)) : null;
 
 	const assets = new Map<string, Blob>();
+	const templates = new Map<string, unknown>();
 	for (const [name, bytes] of Object.entries(files)) {
 		if (name === "manifest.json" || name === "flow.xml" || name.endsWith("/")) continue;
+		const templateMatch = /^templates\/([^/]+)\.xtemplate$/.exec(name);
+		if (templateMatch) {
+			// Only bounded, embedded plain JSON templates; never evaluate code.
+			if (bytes.length <= 1024 * 1024) {
+				try { templates.set(templateMatch[1], JSON.parse(new TextDecoder().decode(bytes))); }
+				catch { /* unsupported packaged or corrupt template; leave the ruling blank */ }
+			}
+			continue;
+		}
 		// Copy into a fresh buffer so the Blob owns its bytes independently.
 		assets.set(name, new Blob([bytes.slice()], { type: mimeFor(name) }));
 	}
 
-	return { manifest, assets, flow };
+	return { manifest, assets, flow, templates };
 }

@@ -34,6 +34,15 @@ jobs:
           fi
 
       - run: npm run build
+      - run: node --check main.js
+      - run: node --experimental-strip-types --test tests/*.test.mjs
+      - name: Package plugin ZIP
+        run: |
+          mkdir -p dist/xnotes-appearance-viewer
+          cp main.js manifest.json styles.css LICENSE README.md dist/xnotes-appearance-viewer/
+          cp node_modules/fflate/LICENSE dist/xnotes-appearance-viewer/LICENSE-fflate.txt
+          cd dist
+          zip -r xnotes-appearance-viewer.zip xnotes-appearance-viewer
 
       # Signs the shipped assets so anyone can confirm they were built from this repo
       # at this commit:  gh attestation verify main.js -R ${{ github.repository }}
@@ -49,11 +58,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           cat > notes.md <<EOF
-          Read-only viewer for \`.xnote\` handwritten notes from the [xnotes Android app](https://github.com/shardulvs/xnotes-android).
+          Unofficial xNotes Appearance Viewer fork: read-only viewer for \`.xnote\` handwritten notes from the [xnotes Android app](https://github.com/shardulvs/xnotes-android).
 
           ## Install
 
-          Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat) using \`$REPO\`, or download \`main.js\`, \`manifest.json\` and \`styles.css\` below into \`<your vault>/.obsidian/plugins/xnotes-viewer/\` and restart Obsidian.
+          Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat) using \`$REPO\`, or download \`main.js\`, \`manifest.json\` and \`styles.css\` below into \`<your vault>/.obsidian/plugins/xnotes-appearance-viewer/\` and restart Obsidian.
 
           ## Verifying this build
 
@@ -65,4 +74,4 @@ jobs:
 
           **Commits**: https://github.com/$REPO/commits/$GITHUB_REF_NAME
           EOF
-          gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css dist/xnotes-appearance-viewer.zip --title "$GITHUB_REF_NAME" --notes-file notes.md
