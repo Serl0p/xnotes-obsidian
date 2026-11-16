@@ -19,6 +19,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node --check main.js
+      - run: node --experimental-strip-types --test tests/*.test.mjs
       - name: Package installable plugin
         run: |
           mkdir -p dist/xnotes-appearance-viewer

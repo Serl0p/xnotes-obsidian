@@ -34,6 +34,14 @@ jobs:
           fi
 
       - run: npm run build
+      - run: node --check main.js
+      - run: node --experimental-strip-types --test tests/*.test.mjs
+      - name: Package plugin ZIP
+        run: |
+          mkdir -p dist/xnotes-appearance-viewer
+          cp main.js manifest.json styles.css dist/xnotes-appearance-viewer/
+          cd dist
+          zip -r xnotes-appearance-viewer.zip xnotes-appearance-viewer
 
       # Signs the shipped assets so anyone can confirm they were built from this repo
       # at this commit:  gh attestation verify main.js -R ${{ github.repository }}
@@ -65,4 +73,4 @@ jobs:
 
           **Commits**: https://github.com/$REPO/commits/$GITHUB_REF_NAME
           EOF
-          gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css dist/xnotes-appearance-viewer.zip --title "$GITHUB_REF_NAME" --notes-file notes.md

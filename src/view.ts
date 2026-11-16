@@ -88,7 +88,7 @@ export class XNoteView extends FileView {
 			el.setAttribute("aria-label",label);
 			for(const [value,title] of options){const opt=el.createEl("option",{text:title});opt.value=value;}
 			el.value=this.plugin.settings[key];
-			el.onchange=()=>{this.plugin.settings[key]=el.value as AppearanceSettings[K];void this.changedAppearance();};
+			el.onchange=()=>{const settings: AppearanceSettings=this.plugin.settings;settings[key]=el.value as AppearanceSettings[K];void this.changedAppearance();};
 		};
 		select("Page","appearanceMode",[["auto","Auto"],["original","Original"],["light","Light"],["dark","Dark"]]);
 		for(const [label,key] of [["Paper","showPaper"],["Template","showTemplate"],["Contrast","adaptInk"]] as const){

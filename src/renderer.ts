@@ -89,7 +89,7 @@ export async function renderPage(
 	}
 
 	const formulas: MathPlacement[] = [];
-	if (text) paintFlowPage(ctx, text.page, text.flow, paperColor, adaptColor(page.style?.text_color,itemAppearance), formulas);
+	if (text) paintFlowPage(ctx, text.page, text.flow, paperColor, adaptColor(page.style?.text_color,itemAppearance), formulas, itemAppearance);
 
 	for (const savedItem of page.items) {
 		const item = adaptItem(savedItem,itemAppearance);
