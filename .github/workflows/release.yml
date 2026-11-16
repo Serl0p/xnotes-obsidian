@@ -39,7 +39,8 @@ jobs:
       - name: Package plugin ZIP
         run: |
           mkdir -p dist/xnotes-appearance-viewer
-          cp main.js manifest.json styles.css dist/xnotes-appearance-viewer/
+          cp main.js manifest.json styles.css LICENSE README.md dist/xnotes-appearance-viewer/
+          cp node_modules/fflate/LICENSE dist/xnotes-appearance-viewer/LICENSE-fflate.txt
           cd dist
           zip -r xnotes-appearance-viewer.zip xnotes-appearance-viewer
 
