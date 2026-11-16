@@ -85,3 +85,18 @@
 	padding: 24px;
 	text-align: center;
 }
+
+/* Appearance Viewer controls and independent local recording playback */
+.xnote-view { display:flex; flex-direction:column; min-height:0; }
+.xnote-toolbar { flex-wrap:wrap; flex-shrink:0; }
+.xnote-appearance-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.xnote-appearance-mode,.xnote-appearance-toggle { display:flex; align-items:center; gap:4px; font-size:var(--font-ui-small); }
+.xnote-appearance-select { max-width:120px; }
+.xnote-pages { height:auto; flex:1 1 auto; min-height:0; }
+.xnote-audio-panel { flex:0 0 auto; max-height:25%; overflow:auto; padding:6px 10px; background:var(--background-secondary); }
+.xnote-audio-panel[hidden] { display:none; }
+.xnote-audio-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:4px 0; }
+.xnote-audio-name { font-size:var(--font-ui-small); color:var(--text-muted); }
+.xnote-audio-player { width:min(100%,340px); height:36px; }
+.xnote-audio-marker { position:absolute; z-index:2; min-width:30px; min-height:30px; border-radius:50%; background:var(--background-secondary); color:var(--text-normal); }
+.xnote-audio-marker.is-playing { color:var(--interactive-accent); }

@@ -103,7 +103,17 @@ export interface FillItem {
 	angle?: number; // radians, clockwise, about the box center
 }
 
-export type Item = StrokeItem | ShapeItem | ImageItem | TableItem | TextItem | FillItem;
+export interface AudioItem {
+	kind: "audio";
+	asset: string;
+	rect: [number,number,number,number];
+	name?: string;
+	rid?: number;
+	duration_ms?: number;
+	peaks?: string;
+}
+
+export type Item = StrokeItem | ShapeItem | ImageItem | TableItem | TextItem | FillItem | AudioItem;
 
 export interface Page {
 	width: number;
@@ -127,6 +137,7 @@ export interface PageStyle {
 	pattern?: string; // "grid", "lines", "dots", "none"
 	template?: string; // any other template, which only the app draws
 	spacing?: number;
+	accent_color?: Rgba;
 	pattern_color?: Rgba; // defaults to grey 50% (150,150,150,128)
 	text_color?: Rgba; // the page's own flow text colour
 }
@@ -147,5 +158,6 @@ export interface Manifest {
 export interface XNoteDocument {
 	manifest: Manifest;
 	assets: Map<string, Blob>;
+	templates: Map<string, unknown>;
 	flow: TextFlow | null;
 }

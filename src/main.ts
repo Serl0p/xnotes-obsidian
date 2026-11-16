@@ -1,12 +1,14 @@
 import { Plugin, PluginSettingTab, type App, type SettingDefinitionItem } from "obsidian";
 import { VIEW_TYPE_XNOTE, XNoteView } from "./view.ts";
+import { DEFAULT_APPEARANCE, type AppearanceSettings } from "./appearance.ts";
 
-interface XNotesSettings {
+interface XNotesSettings extends AppearanceSettings {
 	// Extra resolution multiplier on top of the device pixel ratio, for crisper strokes.
 	renderScale: number;
 }
 
 const DEFAULT_SETTINGS: XNotesSettings = {
+	...DEFAULT_APPEARANCE,
 	renderScale: 1,
 };
 

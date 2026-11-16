@@ -49,11 +49,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           cat > notes.md <<EOF
-          Read-only viewer for \`.xnote\` handwritten notes from the [xnotes Android app](https://github.com/shardulvs/xnotes-android).
+          Unofficial xNotes Appearance Viewer fork: read-only viewer for \`.xnote\` handwritten notes from the [xnotes Android app](https://github.com/shardulvs/xnotes-android).
 
           ## Install
 
-          Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat) using \`$REPO\`, or download \`main.js\`, \`manifest.json\` and \`styles.css\` below into \`<your vault>/.obsidian/plugins/xnotes-viewer/\` and restart Obsidian.
+          Install with [BRAT](https://github.com/TfTHacker/obsidian42-brat) using \`$REPO\`, or download \`main.js\`, \`manifest.json\` and \`styles.css\` below into \`<your vault>/.obsidian/plugins/xnotes-appearance-viewer/\` and restart Obsidian.
 
           ## Verifying this build
 
